@@ -42,7 +42,7 @@ class MRTable(DataTable):
 
     def populate(self, mrs: list[MR]) -> None:
         self.clear(columns=True)
-        self.add_columns("MR", "Title", "Branch", "Pipeline", "Appr.", "Retry", "URL")
+        self.add_columns("MR", "Title", "Branch", "Pipeline", "Appr.", "Retry", "Threads", "URL")
         for mr in mrs:
             retry_indicator = Text("🔄", style="bold") if mr.auto_retry else Text("")
             title = mr.title
@@ -58,6 +58,7 @@ class MRTable(DataTable):
                 pipeline_status_text(mr),
                 approval_text(mr),
                 retry_indicator,
+                Text(str(mr.unresolved_threads), style="yellow" if mr.unresolved_threads > 0 else "white"),
                 Text.from_markup(f"[underline cyan][link={mr.web_url}]Open MR[/link][/underline cyan]"),
                 key=str(mr.iid),
             )

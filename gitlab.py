@@ -86,6 +86,23 @@ async def fetch_approvals(mr_iid: int) -> bool | None:
         return None
 
 
+async def fetch_unresolved_threads(mr_iid: int) -> int:
+    """Return the count of unresolved discussion threads on an MR."""
+    raw = await _run(
+        ["glab", "api", f"projects/:fullpath/merge_requests/{mr_iid}/discussions?per_page=100"]
+    )
+    if not raw.strip():
+        return 0
+    try:
+        data = json.loads(raw)
+        return sum(
+            1 for d in data
+            if any(n.get("resolvable") and not n.get("resolved") for n in d.get("notes", []))
+        )
+    except (json.JSONDecodeError, KeyError):
+        return 0
+
+
 async def retry_job(job_id: int) -> tuple[bool, str]:
     proc = await asyncio.create_subprocess_exec(
         "glab", "api", "--method", "POST",

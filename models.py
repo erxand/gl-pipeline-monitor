@@ -50,6 +50,7 @@ class MR:
     web_url: str
     pipeline: Pipeline | None = None
     approved: bool | None = None  # None = not yet fetched
+    unresolved_threads: int = 0
     auto_retry: bool = False
     expanded: bool = False
 

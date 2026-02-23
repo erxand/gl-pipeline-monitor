@@ -141,6 +141,7 @@ class PipelineMonitor(App):
             try:
                 mr.pipeline = await gitlab.fetch_pipeline(mr.iid)
                 mr.approved = await gitlab.fetch_approvals(mr.iid)
+                mr.unresolved_threads = await gitlab.fetch_unresolved_threads(mr.iid)
                 if mr.pipeline and (mr.pipeline.is_active or mr.expanded):
                     mr.pipeline.jobs = await gitlab.fetch_jobs(mr.pipeline.id)
             except Exception:
