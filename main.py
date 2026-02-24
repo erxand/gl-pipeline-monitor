@@ -74,6 +74,8 @@ class PipelineMonitor(App):
         Binding("enter", "select_cursor", "Expand", show=False),
         Binding("o", "open_mr", "Open", show=False),
         Binding("f", "force_refresh", "Refresh", show=False),
+        Binding("j", "mr_down", "Down", show=False),
+        Binding("k", "mr_up", "Up", show=False),
     ]
 
     def __init__(self) -> None:
@@ -268,6 +270,12 @@ class PipelineMonitor(App):
         mr = self._selected_mr()
         if mr:
             await gitlab.open_mr_in_browser(mr.iid)
+
+    def action_mr_down(self) -> None:
+        self.query_one("#mr-table", MRTable).action_cursor_down()
+
+    def action_mr_up(self) -> None:
+        self.query_one("#mr-table", MRTable).action_cursor_up()
 
     def action_force_refresh(self) -> None:
         self.seconds_until_refresh = REFRESH_INTERVAL
