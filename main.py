@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
 from __future__ import annotations
+import os
+import sys
+from pathlib import Path
+
+def _maybe_reexec_into_venv():
+    script_dir = Path(__file__).resolve().parent
+    venv_python = script_dir / ".venv" / "bin" / "python"
+    if venv_python.is_file() and os.environ.get("VENV_PREFERRED") != "1":
+        os.environ["VENV_PREFERRED"] = "1"
+        os.execv(str(venv_python), [str(venv_python)] + sys.argv)
+
+_maybe_reexec_into_venv()
+
+print("Running with:", sys.executable)
 
 import asyncio
-import os
+import shutil
+import subprocess
 from datetime import datetime
 
 from textual.app import App, ComposeResult
@@ -16,6 +31,7 @@ from rich.text import Text
 import gitlab
 from models import MR
 from widgets import MRTable, RetryLog, build_job_detail
+
 
 REFRESH_INTERVAL = 30
 
