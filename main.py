@@ -34,6 +34,9 @@ from widgets import MRTable, RetryLog, build_job_detail
 
 
 REFRESH_INTERVAL = 30
+_SPINNER_FRAMES = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
 def _preflight_check() -> None:
     """Validate glab CLI environment before starting. Exits with a descriptive error on failure."""
     if shutil.which("glab") is None:
@@ -126,20 +129,24 @@ class PipelineMonitor(App):
         self.seconds_until_refresh = REFRESH_INTERVAL
         self._countdown_timer: Timer | None = None
         self._refresh_task: asyncio.Task | None = None
+        self._current_user_id: int | None = None
+        self._refreshing: bool = False
+        self._spinner_frame: int = 0
+        self._spinner_timer: Timer | None = None
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
-        yield Static(
-            "a all MRs · d drafts · r retry · ↵ expand · o open · f refresh · esc quit",
-            id="hotkeys",
-        )
+        yield Static(id="hotkeys")
         yield MRTable(id="mr-table")
         yield RichLog(id="detail-panel", max_lines=200)
         yield RetryLog(id="retry-log", max_lines=100)
 
     def on_mount(self) -> None:
         self._update_header()
+        self._update_hotkeys()
+        self.query_one("#mr-table", MRTable).loading = True
         self._countdown_timer = self.set_interval(1, self._tick)
+        self._spinner_timer = self.set_interval(0.15, self._spin, pause=True)
         self._schedule_refresh()
 
     def _schedule_refresh(self) -> None:
@@ -156,6 +163,16 @@ class PipelineMonitor(App):
             f"Next refresh: {mins}:{secs:02d}"
         )
 
+    def _update_hotkeys(self) -> None:
+        spinner = f" {_SPINNER_FRAMES[self._spinner_frame]}" if self._refreshing else ""
+        self.query_one("#hotkeys", Static).update(
+            f"a all MRs · d drafts · r retry · ↵ expand · o open · f refresh{spinner} · esc quit"
+        )
+
+    def _spin(self) -> None:
+        self._spinner_frame = (self._spinner_frame + 1) % len(_SPINNER_FRAMES)
+        self._update_hotkeys()
+
     def _tick(self) -> None:
         self.seconds_until_refresh -= 1
         if self.seconds_until_refresh <= 0:
@@ -164,47 +181,61 @@ class PipelineMonitor(App):
         self._update_header()
 
     async def _do_refresh(self) -> None:
+        self._refreshing = True
+        self._spinner_timer.resume()
+        self._update_hotkeys()
         log = self.query_one("#retry-log", RetryLog)
         try:
-            mrs = await gitlab.fetch_mrs(mine_only=self.mine_only)
-        except Exception as e:
-            log.write(f"[yellow]{_ts()}[/] [red]Error fetching MRs: {e}[/]")
-            return
-
-        # Preserve auto_retry and expanded state from previous data
-        old_state = {mr.iid: (mr.auto_retry, mr.expanded) for mr in self.mrs}
-        for mr in mrs:
-            prev = old_state.get(mr.iid, (False, False))
-            mr.auto_retry = prev[0]
-            mr.expanded = prev[1]
-
-        # Fetch pipelines concurrently
-        async def enrich(mr: MR) -> None:
             try:
-                mr.pipeline = await gitlab.fetch_pipeline(mr.iid)
-                mr.approved = await gitlab.fetch_approvals(mr.iid)
-                mr.unresolved_threads = await gitlab.fetch_unresolved_threads(mr.iid)
-                if mr.pipeline and (mr.pipeline.is_active or mr.expanded):
-                    mr.pipeline.jobs = await gitlab.fetch_jobs(mr.pipeline.id)
-            except Exception:
-                pass
+                if self._current_user_id is None:
+                    self._current_user_id = await gitlab.fetch_current_user_id()
+                mrs = await gitlab.fetch_mrs(current_user_id=self._current_user_id)
+            except Exception as e:
+                log.write(f"[yellow]{_ts()}[/] [red]Error fetching MRs: {e}[/]")
+                return
 
-        await asyncio.gather(*(enrich(mr) for mr in mrs))
+            # Preserve auto_retry and expanded state from previous data
+            old_state = {mr.iid: (mr.auto_retry, mr.expanded) for mr in self.mrs}
+            for mr in mrs:
+                prev = old_state.get(mr.iid, (False, False))
+                mr.auto_retry = prev[0]
+                mr.expanded = prev[1]
 
-        self.mrs = mrs
-        self._render_table()
-        self._render_detail()
+            # Fetch pipelines concurrently
+            async def enrich(mr: MR) -> None:
+                try:
+                    mr.pipeline = await gitlab.fetch_pipeline(mr.iid)
+                    mr.approved = await gitlab.fetch_approvals(mr.iid)
+                    mr.unresolved_threads = await gitlab.fetch_unresolved_threads(mr.iid)
+                    if mr.pipeline and (mr.pipeline.is_active or mr.expanded):
+                        mr.pipeline.jobs = await gitlab.fetch_jobs(mr.pipeline.id)
+                except Exception:
+                    pass
 
-        # Run auto-retry immediately after refresh
-        await self._retry_check()
+            await asyncio.gather(*(enrich(mr) for mr in mrs))
+
+            self.mrs = mrs
+            self._render_table()
+            self._render_detail()
+
+            # Run auto-retry immediately after refresh
+            await self._retry_check()
+        finally:
+            self._refreshing = False
+            self._spinner_timer.pause()
+            self._update_hotkeys()
 
     def _visible_mrs(self) -> list[MR]:
-        if self.show_drafts:
-            return self.mrs
-        return [mr for mr in self.mrs if not mr.is_draft]
+        mrs = self.mrs
+        if self.mine_only:
+            mrs = [mr for mr in mrs if mr.assigned_to_me]
+        if not self.show_drafts:
+            mrs = [mr for mr in mrs if not mr.is_draft]
+        return mrs
 
     def _render_table(self) -> None:
         table = self.query_one("#mr-table", MRTable)
+        table.loading = False
         # Preserve selected row across re-render
         selected_key = None
         if table.row_count > 0 and table.cursor_row is not None and table.cursor_row < table.row_count:
@@ -274,9 +305,8 @@ class PipelineMonitor(App):
 
     def action_toggle_all(self) -> None:
         self.mine_only = not self.mine_only
+        self._render_table()
         self._update_header()
-        self.seconds_until_refresh = REFRESH_INTERVAL
-        self._schedule_refresh()
 
     def action_toggle_drafts(self) -> None:
         self.show_drafts = not self.show_drafts
