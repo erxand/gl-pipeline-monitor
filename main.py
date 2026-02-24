@@ -34,6 +34,29 @@ from widgets import MRTable, RetryLog, build_job_detail
 
 
 REFRESH_INTERVAL = 30
+def _preflight_check() -> None:
+    """Validate glab CLI environment before starting. Exits with a descriptive error on failure."""
+    if shutil.which("glab") is None:
+        sys.exit(
+            "Error: 'glab' CLI not found in PATH.\n"
+            "Install it from: https://gitlab.com/gitlab-org/cli"
+        )
+
+    result = subprocess.run(["glab", "auth", "status"], capture_output=True)
+    if result.returncode != 0:
+        sys.exit(
+            "Error: 'glab' is not authenticated.\n"
+            "Run 'glab auth login' to authenticate."
+        )
+
+    result = subprocess.run(
+        ["glab", "api", "projects/:fullpath"], capture_output=True
+    )
+    if result.returncode != 0:
+        sys.exit(
+            "Error: Not a GitLab repository.\n"
+            "Run this tool from a directory that is a GitLab-backed git repository."
+        )
 
 
 def _ts() -> str:
@@ -301,4 +324,5 @@ class PipelineMonitor(App):
 
 
 if __name__ == "__main__":
+    _preflight_check()
     PipelineMonitor().run()
