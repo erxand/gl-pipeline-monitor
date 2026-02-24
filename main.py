@@ -84,6 +84,7 @@ class PipelineMonitor(App):
 
     BINDINGS = [
         Binding("escape", "quit", "Quit"),
+        Binding("q", "quit", "Quit"),
         Binding("a", "toggle_all", "All MRs", show=False),
         Binding("d", "toggle_drafts", "Drafts", show=False),
         Binding("r", "toggle_retry", "Retry", show=False),
