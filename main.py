@@ -265,7 +265,12 @@ class PipelineMonitor(App):
         if not self.show_drafts:
             mrs = [mr for mr in mrs if not mr.is_draft]
         if self.search_query:
-            mrs = [mr for mr in mrs if fuzzy_match(mr.title, self.search_query)[0] is not None]
+            scored = []
+            for mr in mrs:
+                score, _ = fuzzy_match(mr.title, self.search_query)
+                if score is not None:
+                    scored.append((score, mr))
+            mrs = [mr for _, mr in sorted(scored, key=lambda x: x[0], reverse=True)]
         return mrs
 
     def _render_table(self) -> None:

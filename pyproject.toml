@@ -6,4 +6,5 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "textual>=8.0.0",
+    "pfzy>=0.3.4",
 ]

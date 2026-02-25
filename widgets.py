@@ -35,19 +35,19 @@ def approval_text(mr: MR) -> Text:
     return Text("")
 
 
+from pfzy.score import fzy_scorer
+
+
 def fuzzy_match(title: str, query: str) -> tuple[float | None, list[int]]:
-    """Greedy subsequence match. Returns (score, indices), or (None, []) on no match."""
-    tl = title.lower()
-    ti = 0
-    indices = []
-    for char in query.lower():
-        while ti < len(tl) and tl[ti] != char:
-            ti += 1
-        if ti >= len(tl):
-            return None, []
-        indices.append(ti)
-        ti += 1
-    return 0.0, indices
+    """fzy-style fuzzy match. Returns (score, indices), or (None, []) on no match.
+
+    Scores reward consecutive character groups and word-boundary hits, so
+    results can be sorted best-first by score.
+    """
+    score, indices = fzy_scorer(query.lower(), title.lower())
+    if indices is None:
+        return None, []
+    return score, indices
 
 
 def _highlight_match(title: str, query: str) -> Text:
