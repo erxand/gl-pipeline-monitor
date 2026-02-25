@@ -48,6 +48,7 @@ class MR:
     title: str
     branch: str
     web_url: str
+    assigned_to_me: bool = False
     pipeline: Pipeline | None = None
     approved: bool | None = None  # None = not yet fetched
     unresolved_threads: int = 0

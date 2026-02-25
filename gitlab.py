@@ -14,11 +14,18 @@ async def _run(cmd: list[str]) -> str:
     return stdout.decode()
 
 
-async def fetch_mrs(mine_only: bool = True) -> list[MR]:
-    cmd = ["glab", "mr", "list", "--per-page=100", "--output=json"]
-    if mine_only:
-        cmd.append("--assignee=@me")
-    raw = await _run(cmd)
+async def fetch_current_user_id() -> int | None:
+    raw = await _run(["glab", "api", "user"])
+    if not raw.strip():
+        return None
+    try:
+        return json.loads(raw).get("id")
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+async def fetch_mrs(current_user_id: int | None = None) -> list[MR]:
+    raw = await _run(["glab", "mr", "list", "--per-page=100", "--output=json"])
     if not raw.strip():
         return []
     data = json.loads(raw)
@@ -28,6 +35,16 @@ async def fetch_mrs(mine_only: bool = True) -> list[MR]:
             title=item["title"],
             branch=item["source_branch"],
             web_url=item["web_url"],
+            assigned_to_me=(
+                current_user_id is not None
+                and (
+                    (item.get("assignee") or {}).get("id") == current_user_id
+                    or any(
+                        a.get("id") == current_user_id
+                        for a in (item.get("assignees") or [])
+                    )
+                )
+            ),
         )
         for item in data
         if item.get("state") == "opened"
