@@ -116,7 +116,6 @@ class PipelineMonitor(App):
     """
 
     BINDINGS = [
-        Binding("escape", "quit", "Quit"),
         Binding("q", "quit", "Quit"),
         Binding("m", "show_mine", "Mine", show=False),
         Binding("a", "show_all", "All", show=False),
@@ -199,7 +198,7 @@ class PipelineMonitor(App):
     def _update_hotkeys(self) -> None:
         spinner = f" {_SPINNER_FRAMES[self._spinner_frame]}" if self._refreshing else ""
         self.query_one("#hotkeys", Static).update(
-            f"r retry · ↵ expand · o open · f refresh{spinner} · esc quit"
+            f"r retry · ↵ expand · o open · f refresh{spinner} · q quit"
         )
 
     def _spin(self) -> None:

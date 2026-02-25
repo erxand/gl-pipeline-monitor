@@ -84,7 +84,7 @@ glpipeline # Whatever you named the symlink from before
 | `Enter`   | Expand/collapse job details         |
 | `o`       | Open MR in browser                  |
 | `f`       | Force refresh                       |
-| `Esc`, `q`| Quit                                |
+| `q`       | Quit                                |
 
 ## Features
 
