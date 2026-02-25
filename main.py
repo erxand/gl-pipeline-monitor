@@ -22,6 +22,7 @@ from datetime import datetime
 
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
+from textual.events import Key
 from textual.widgets import Header, Footer, Static, RichLog
 from textual.timer import Timer
 from textual.binding import Binding
@@ -30,7 +31,7 @@ from rich.text import Text
 
 import gitlab
 from models import MR
-from widgets import MRTable, RetryLog, build_job_detail
+from widgets import MRTable, RetryLog, build_job_detail, fuzzy_match
 
 
 REFRESH_INTERVAL = 30
@@ -76,12 +77,18 @@ class PipelineMonitor(App):
         background: $primary-background;
         padding: 0 1;
     }
-    #hotkeys {
+    #filter-row {
         dock: top;
         height: 1;
         background: $surface;
+    }
+    #filter-bar {
+        width: 1fr;
         padding: 0 1;
-        text-align: right;
+    }
+    #hotkeys {
+        width: auto;
+        padding: 0 1;
         color: $text-muted;
     }
     #mr-table {
@@ -111,8 +118,10 @@ class PipelineMonitor(App):
     BINDINGS = [
         Binding("escape", "quit", "Quit"),
         Binding("q", "quit", "Quit"),
-        Binding("a", "toggle_all", "All MRs", show=False),
+        Binding("m", "show_mine", "Mine", show=False),
+        Binding("a", "show_all", "All", show=False),
         Binding("d", "toggle_drafts", "Drafts", show=False),
+        Binding("slash", "start_search", "Search", show=False),
         Binding("r", "toggle_retry", "Retry", show=False),
         Binding("enter", "select_cursor", "Expand", show=False),
         Binding("o", "open_mr", "Open", show=False),
@@ -126,6 +135,8 @@ class PipelineMonitor(App):
         self.mrs: list[MR] = []
         self.show_drafts = False
         self.mine_only = True
+        self.search_query: str = ""
+        self._searching: bool = False
         self.seconds_until_refresh = REFRESH_INTERVAL
         self._countdown_timer: Timer | None = None
         self._refresh_task: asyncio.Task | None = None
@@ -136,13 +147,16 @@ class PipelineMonitor(App):
 
     def compose(self) -> ComposeResult:
         yield Static(id="header-bar")
-        yield Static(id="hotkeys")
+        with Horizontal(id="filter-row"):
+            yield Static(id="filter-bar")
+            yield Static(id="hotkeys")
         yield MRTable(id="mr-table")
         yield RichLog(id="detail-panel", max_lines=200)
         yield RetryLog(id="retry-log", max_lines=100)
 
     def on_mount(self) -> None:
         self._update_header()
+        self._update_filter_bar()
         self._update_hotkeys()
         self.query_one("#mr-table", MRTable).loading = True
         self._countdown_timer = self.set_interval(1, self._tick)
@@ -153,20 +167,39 @@ class PipelineMonitor(App):
         self._refresh_task = asyncio.ensure_future(self._do_refresh())
 
     def _update_header(self) -> None:
-        drafts_label = "ON" if self.show_drafts else "OFF"
-        scope_label = "All" if not self.mine_only else "Mine"
         mins = self.seconds_until_refresh // 60
         secs = self.seconds_until_refresh % 60
-        header = self.query_one("#header-bar", Static)
-        header.update(
-            f"GL Pipeline Monitor | MRs: {scope_label} | Drafts: {drafts_label} | "
-            f"Next refresh: {mins}:{secs:02d}"
+        self.query_one("#header-bar", Static).update(
+            f"GL Pipeline Monitor | Next refresh: {mins}:{secs:02d}"
         )
+
+    def _update_filter_bar(self) -> None:
+        t = Text()
+
+        def pill(label: str, active: bool) -> None:
+            t.append(f" {label} ", style="bold underline" if active else "dim")
+
+        pill("m Mine", self.mine_only)
+        t.append("  ")
+        pill("a All", not self.mine_only)
+        t.append("  ")
+        pill("d Drafts", self.show_drafts)
+
+        t.append("  ")
+        t.append(" / ", style="bold underline" if (self._searching or self.search_query) else "dim")
+        if self._searching:
+            t.append(self.search_query + "▊")
+        elif self.search_query:
+            t.append(self.search_query, style="dim")
+        else:
+            t.append("search...", style="dim")
+
+        self.query_one("#filter-bar", Static).update(t)
 
     def _update_hotkeys(self) -> None:
         spinner = f" {_SPINNER_FRAMES[self._spinner_frame]}" if self._refreshing else ""
         self.query_one("#hotkeys", Static).update(
-            f"a all MRs · d drafts · r retry · ↵ expand · o open · f refresh{spinner} · esc quit"
+            f"r retry · ↵ expand · o open · f refresh{spinner} · esc quit"
         )
 
     def _spin(self) -> None:
@@ -231,6 +264,8 @@ class PipelineMonitor(App):
             mrs = [mr for mr in mrs if mr.assigned_to_me]
         if not self.show_drafts:
             mrs = [mr for mr in mrs if not mr.is_draft]
+        if self.search_query:
+            mrs = [mr for mr in mrs if fuzzy_match(mr.title, self.search_query)[0] is not None]
         return mrs
 
     def _render_table(self) -> None:
@@ -240,12 +275,13 @@ class PipelineMonitor(App):
         selected_key = None
         if table.row_count > 0 and table.cursor_row is not None and table.cursor_row < table.row_count:
             selected_key = table.ordered_rows[table.cursor_row].key.value
-        table.populate(self._visible_mrs())
+        table.populate(self._visible_mrs(), search_query=self.search_query)
         if selected_key is not None:
             for idx, row in enumerate(table.ordered_rows):
                 if row.key.value == selected_key:
                     table.move_cursor(row=idx)
                     break
+        self._update_filter_bar()
 
     def _selected_mr(self) -> MR | None:
         table = self.query_one("#mr-table", MRTable)
@@ -301,17 +337,40 @@ class PipelineMonitor(App):
                 pass
             await self._auto_retry_mr(mr)
 
+    # --- Key handling ---
+
+    def on_key(self, event: Key) -> None:
+        if not self._searching:
+            return
+        event.prevent_default()
+        if event.key == "escape":
+            self._searching = False
+            self.search_query = ""
+        elif event.key == "enter":
+            self._searching = False
+        elif event.key == "backspace":
+            self.search_query = self.search_query[:-1]
+        elif event.character and event.character.isprintable():
+            self.search_query += event.character
+        self._render_table()
+
     # --- Actions ---
 
-    def action_toggle_all(self) -> None:
-        self.mine_only = not self.mine_only
+    def action_show_mine(self) -> None:
+        self.mine_only = True
         self._render_table()
-        self._update_header()
+
+    def action_show_all(self) -> None:
+        self.mine_only = False
+        self._render_table()
 
     def action_toggle_drafts(self) -> None:
         self.show_drafts = not self.show_drafts
         self._render_table()
-        self._update_header()
+
+    def action_start_search(self) -> None:
+        self._searching = True
+        self._update_filter_bar()
 
     async def action_toggle_retry(self) -> None:
         mr = self._selected_mr()

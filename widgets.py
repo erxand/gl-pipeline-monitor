@@ -35,25 +35,65 @@ def approval_text(mr: MR) -> Text:
     return Text("")
 
 
+def fuzzy_match(title: str, query: str) -> tuple[float | None, list[int]]:
+    """Greedy subsequence match. Returns (score, indices), or (None, []) on no match."""
+    tl = title.lower()
+    ti = 0
+    indices = []
+    for char in query.lower():
+        while ti < len(tl) and tl[ti] != char:
+            ti += 1
+        if ti >= len(tl):
+            return None, []
+        indices.append(ti)
+        ti += 1
+    return 0.0, indices
+
+
+def _highlight_match(title: str, query: str) -> Text:
+    if not query:
+        return Text(title)
+    score, indices = fuzzy_match(title, query)
+    if score is None:
+        return Text(title)
+    idx_set = set(indices)
+    t = Text()
+    for i, char in enumerate(title):
+        t.append(char, style="bold yellow" if i in idx_set else "")
+    return t
+
+
 class MRTable(DataTable):
     def on_mount(self) -> None:
         self.cursor_type = "row"
         self.cursor_foreground_priority = "renderable"
 
-    def populate(self, mrs: list[MR]) -> None:
+    def populate(self, mrs: list[MR], search_query: str = "") -> None:
         self.clear(columns=True)
-        self.add_columns("MR", "Title", "Branch", "Pipeline", "Appr.", "Retry", "Threads")
+
+        # Size the title column to fill remaining horizontal space.
+        # Other fixed columns: MR(6) + Branch(30) + Pipeline(11) + Appr.(5) + Retry(5) + Threads(7) = 64
+        # DataTable adds ~2 chars of cell padding per column (left+right) × 7 cols = 14
+        other_cols = 64
+        cell_padding = 14
+        title_width = max(20, self.size.width - other_cols - cell_padding) if self.size.width > 0 else 60
+
+        self.add_column("MR", width=6)
+        self.add_column("Title", width=title_width)
+        self.add_column("Branch", width=30)
+        self.add_column("Pipeline", width=11)
+        self.add_column("Appr.", width=5)
+        self.add_column("Retry", width=5)
+        self.add_column("Threads", width=7)
+
         for mr in mrs:
             retry_indicator = Text("🔄", style="bold") if mr.auto_retry else Text("")
-            title = mr.title
-            if len(title) > 60:
-                title = title[:57] + "..."
             branch = mr.branch
             if len(branch) > 30:
                 branch = branch[:27] + "..."
             self.add_row(
                 Text(f"!{mr.iid}"),
-                Text(title),
+                _highlight_match(mr.title, search_query),
                 Text(branch, style="dim"),
                 pipeline_status_text(mr),
                 approval_text(mr),
